@@ -89,6 +89,8 @@ impl ProviderInstance {
         })
     }
 
+    // Retained from upstream for reference; this App-Store-only server no longer serves V1 (-2).
+    #[allow(dead_code)]
     pub async fn get_authentication_headers_v1(&mut self) -> Result<HashMap<String, String>> {
         let mut headers = self.provider.get_anisette_headers(false).await?;
 

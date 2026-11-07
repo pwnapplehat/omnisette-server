@@ -6,7 +6,7 @@ use base64::engine::general_purpose::STANDARD as base64_engine;
 use base64::Engine;
 use bytestring::ByteString;
 use log::{debug, error, info};
-use omnisette::adi_proxy::IDENTIFIER_LENGTH;
+use omnisette::adi_proxy::{IDENTIFIER_LENGTH, STORE_DS_ID};
 use serde::Deserialize;
 #[cfg(test)]
 use serde::Serialize;
@@ -31,8 +31,8 @@ const TIMEOUT: Duration = Duration::from_millis(TIMEOUT_DURATION);
 #[cfg_attr(test, derive(Serialize))]
 pub struct Identifier {
     pub identifier: String,
-    /// Optional directory-services ID for this provisioning session. Omitted/null -> the server
-    /// default (-2, ordinary anisette). Clients doing the App Store AMD flow send -1.
+    /// Directory-services ID. This App-Store-only server requires the App Store AMD value (-1);
+    /// sessions started with any other ds_id (or none) are rejected.
     #[serde(default)]
     pub ds_id: Option<i64>,
 }
@@ -104,6 +104,15 @@ impl ProvisioningSession {
         match serde_json::from_str::<Identifier>(text.to_string().as_str()) {
             Ok(d) => {
                 let ds_id = d.ds_id;
+                // App-Store-only server: only the App Store AMD flow (ds_id = -1) may provision here.
+                if ds_id != Some(STORE_DS_ID) {
+                    let message = format!(
+                        "this server only serves the App Store AMD flow (ds_id = {STORE_DS_ID})"
+                    );
+                    error!("{message}");
+                    ctx.exit(ServerResult::InvalidIdentifier { message }, None);
+                    return;
+                }
                 let identifier = match base64_engine.decode(d.identifier) {
                     Ok(i) => i,
                     Err(e) => {

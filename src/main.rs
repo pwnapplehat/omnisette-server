@@ -16,11 +16,9 @@ use std::pin::Pin;
 use base64::engine::general_purpose::STANDARD as base64_engine;
 use base64::Engine;
 use clap::Parser;
-use log::{debug, error, info, LevelFilter};
-use omnisette::adi_proxy::{Identifier, AKD_USER_AGENT, CLIENT_INFO_HEADER, IDENTIFIER_LENGTH};
-use once_cell::sync::Lazy;
+use log::{error, info, LevelFilter};
+use omnisette::adi_proxy::{Identifier, AKD_USER_AGENT, CLIENT_INFO_HEADER, IDENTIFIER_LENGTH, STORE_DS_ID};
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
-use parking_lot::Mutex;
 use serde::Deserialize;
 use serde::Serialize;
 use simplelog::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
@@ -34,24 +32,14 @@ use crate::rate_limit::{client_ip, RateLimiter};
 
 pub const PAYLOAD_LIMIT: usize = 1536; // this should be more than enough for identifier + adi.pb, both in base64 and wrapped in JSON
 
-static V1_PROVIDER: Mutex<Lazy<ProviderInstance>> =
-    Mutex::new(Lazy::new(|| ProviderInstance::new(None, None, None).unwrap()));
-
 #[cfg(test)]
 mod tests;
 
 #[get("/")]
-#[allow(clippy::await_holding_lock)]
 async fn index() -> impl Responder {
-    let mut provider = V1_PROVIDER.lock();
-
-    match provider.get_authentication_headers_v1().await {
-        Ok(d) => format!("{d:?}"),
-        Err(e) => {
-            error!("Couldn't get headers: {e:?}");
-            format!("Error: {e:?}")
-        }
-    }
+    "This is an App Store (AMD, ds_id=-1) anisette server. Use POST /v3/get_headers or the \
+     /v3/provisioning_session WebSocket, both with ds_id = -1. Ordinary (ds_id -2 / GrandSlam \
+     sign-in) anisette is intentionally not served here. See /health for liveness."
 }
 
 #[derive(Serialize)]
@@ -94,8 +82,8 @@ async fn provisioning_session_ws(
 pub struct HeadersInput {
     identifier: String,
     adi_pb: String,
-    /// Optional directory-services ID. Omitted/null -> -2 (ordinary anisette). Must match the
-    /// ds_id the supplied adi.pb was provisioned with; the App Store AMD flow sends -1.
+    /// Directory-services ID. This App-Store-only server requires the App Store AMD value (-1);
+    /// requests with any other ds_id (or none) are rejected.
     #[serde(default)]
     ds_id: Option<i64>,
 }
@@ -105,6 +93,17 @@ pub struct HeadersInput {
 async fn get_headers(input: web::Json<HeadersInput>) -> impl Responder {
     info!("Getting unique headers");
     let input = input.into_inner();
+
+    // App-Store-only server: refuse ordinary (ds_id -2 / GrandSlam sign-in) anisette. Only the
+    // App Store AMD flow (ds_id = -1) is served here.
+    if input.ds_id != Some(STORE_DS_ID) {
+        return ServerResult::GetHeadersError {
+            message: format!(
+                "this server only serves the App Store AMD flow (ds_id = {STORE_DS_ID}); \
+                 ordinary anisette is not available here"
+            ),
+        };
+    }
 
     let identifier = match base64_engine.decode(input.identifier) {
         Ok(i) => i,
@@ -231,15 +230,6 @@ async fn main() -> std::io::Result<()> {
         ColorChoice::Auto,
     )
     .unwrap();
-
-    debug!(
-        "Initialized V1 provider and got headers: {:?}",
-        V1_PROVIDER
-            .lock()
-            .get_authentication_headers_v1()
-            .await
-            .unwrap()
-    );
 
     // Shared across all workers so the per-IP budget is global, not per-thread.
     let limiter = RateLimiter::new(rate_limit::BURST_CAPACITY, rate_limit::REFILL_PER_SEC);

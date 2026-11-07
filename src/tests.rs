@@ -87,7 +87,7 @@ async fn test() -> Result<()> {
     let identifier_base64 = base64_engine.encode(identifier);
     let input = serde_json::to_string(&provisioning_session::Identifier {
         identifier: identifier_base64.clone(),
-        ds_id: None,
+        ds_id: Some(-1), // App-Store-only server: provisioning requires the App Store ds_id (-1)
     })
     .unwrap();
     println!("sending: {input}");
@@ -257,7 +257,7 @@ async fn test() -> Result<()> {
             serde_json::to_string(&HeadersInput {
                 identifier: identifier_base64,
                 adi_pb,
-                ds_id: None,
+                ds_id: Some(-1), // App-Store-only server: get_headers requires the App Store ds_id (-1)
             })
             .unwrap(),
         )
