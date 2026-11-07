@@ -10,6 +10,14 @@ and uses a fork of **[SideStore/apple-private-apis](https://github.com/pwnappleh
 (`omnisette` crate). All credit for the original server and the ADI plumbing goes to SideStore and
 Dadoum. See [Credits & license](#credits--license).
 
+## Public instance
+
+A public instance runs at **`https://anisette.ipaside.com`**. Point any anisette-v3 client
+(iloader, xtool, SideStore, ipatool-style tools, etc.) at it — and it supports the App Store
+`ds_id` extension described below. It is rate-limited per client IP but the limits are generous for
+normal use. Please be considerate with load; if you expect heavy or production traffic, **self-host**
+(see [Production deployment](#production-deployment)) rather than relying on this instance.
+
 ## What this fork adds
 
 1. **Per-request `ds_id`.** Ordinary anisette provisions and requests OTPs under directory-services
