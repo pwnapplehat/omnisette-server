@@ -18,8 +18,13 @@ use crate::{
 };
 
 const TIMEOUT_CHECK_INTERVAL: Duration = Duration::from_millis(250);
-// TODO: allow changing the timeout with a command line argument
-const TIMEOUT_DURATION: u64 = 1250; // TODO: adjust to be as small as possible while still not closing on slower connections
+// Max idle time between client steps before the session is dropped. The upstream default (1250ms)
+// is far too tight for the real GSA flow: the client fetches the spim from gsa.apple.com's
+// MidService *between* WebSocket steps (and posts cpim to finish provisioning), which routinely
+// takes 1-3s, so 1250ms raced and dropped the session mid-provisioning (observed on-device). 30s
+// gives generous slack for slow networks and Apple round-trips; normal exchanges still finish in
+// a few seconds.
+const TIMEOUT_DURATION: u64 = 30_000;
 const TIMEOUT: Duration = Duration::from_millis(TIMEOUT_DURATION);
 
 #[derive(Deserialize)]
