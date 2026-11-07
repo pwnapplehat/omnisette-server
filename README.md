@@ -12,11 +12,19 @@ Dadoum. See [Credits & license](#credits--license).
 
 ## Public instance
 
-A public instance runs at **`https://anisette.ipaside.com`**. Point any anisette-v3 client
-(iloader, xtool, SideStore, ipatool-style tools, etc.) at it — and it supports the App Store
-`ds_id` extension described below. It is rate-limited per client IP but the limits are generous for
-normal use. Please be considerate with load; if you expect heavy or production traffic, **self-host**
-(see [Production deployment](#production-deployment)) rather than relying on this instance.
+A public instance runs at **`https://anisette.ipaside.com`**. It is a standard anisette-v3 server
+**plus** the App Store AMD `ds_id` extension described below — as far as we know the first public
+anisette that supports the App Store's type-2 (`ds_id = -1`) flow, so App-Store-download tools can use
+it directly.
+
+Scope to be aware of: like any **non-Mac** anisette (the ADI libs are Android-derived), the identity it
+produces is subject to Apple's current restrictions on GrandSlam / Apple-ID *sign-in* — the classic
+free-developer sideload sign-in increasingly requires **Mac-derived** anisette and will return
+`-80045`/`-80046` against any non-Mac server, this one included. Use a Mac-based anisette service for
+that; use this one for the App Store `ds_id` flow and ordinary anisette-v3 needs.
+
+It is rate-limited per client IP (generous for normal use). Please be considerate with load; for heavy
+or production traffic, **self-host** (see [Production deployment](#production-deployment)).
 
 ## What this fork adds
 
