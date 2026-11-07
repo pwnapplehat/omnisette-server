@@ -138,9 +138,8 @@ impl ProvisioningSession {
                 }
 
                 self.provider = match ProviderInstance::new(
-                    Some(identifier.as_slice().try_into().unwrap()),
+                    identifier.as_slice().try_into().unwrap(),
                     None,
-                    ds_id,
                 ) {
                     Ok(p) => Some(p),
                     Err(e) => {

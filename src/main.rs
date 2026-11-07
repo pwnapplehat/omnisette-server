@@ -20,6 +20,7 @@ use log::{error, info, LevelFilter};
 use omnisette::adi_proxy::{Identifier, AKD_USER_AGENT, CLIENT_INFO_HEADER, IDENTIFIER_LENGTH, STORE_DS_ID};
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use serde::Deserialize;
+#[cfg(test)]
 use serde::Serialize;
 use simplelog::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
 
@@ -40,12 +41,6 @@ async fn index() -> impl Responder {
     "This is an App Store (AMD, ds_id=-1) anisette server. Use POST /v3/get_headers or the \
      /v3/provisioning_session WebSocket, both with ds_id = -1. Ordinary (ds_id -2 / GrandSlam \
      sign-in) anisette is intentionally not served here. See /health for liveness."
-}
-
-#[derive(Serialize)]
-struct ClientInfo {
-    client_info: String,
-    user_agent: String,
 }
 
 // client info is such a simple response that it's faster just to format at const time instead of using serde_json
@@ -131,7 +126,7 @@ async fn get_headers(input: web::Json<HeadersInput>) -> impl Responder {
         }
     };
 
-    let mut provider = match ProviderInstance::new(Some(identifier), Some(adi_pb), input.ds_id) {
+    let mut provider = match ProviderInstance::new(identifier, Some(adi_pb)) {
         Ok(i) => i,
         Err(e) => {
             error!("Got creating ProviderInstance: {e:?}");

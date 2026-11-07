@@ -1,63 +1,33 @@
 use std::collections::HashMap;
 use std::env::current_dir;
-use std::io::{Read, Write};
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Result};
 use log::{debug, error};
 use omnisette::adi_proxy::{
-    ADIProxy, ADIProxyAnisetteProvider, Identifier, StartProvisioningData, DS_ID, IDENTIFIER_LENGTH,
+    ADIProxy, ADIProxyAnisetteProvider, Identifier, StartProvisioningData, STORE_DS_ID,
 };
 use omnisette::anisette_headers_provider::AnisetteHeadersProvider;
 use omnisette::store_services_core::StoreServicesCoreADIProxy;
-use rand::RngCore;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+/// An ADI provider instance, fixed to the App Store AMD directory-services id ([`STORE_DS_ID`] = -1).
+/// This server serves only the App Store flow, so there is no ordinary (-2) / V1 path here.
 pub struct ProviderInstance {
     provider: ADIProxyAnisetteProvider<StoreServicesCoreADIProxy<'static>>,
     path: PathBuf,
-    should_cleanup: bool,
-    ds_id: i64,
 }
 
 impl ProviderInstance {
-    pub fn new(
-        identifier: Option<Identifier>,
-        adi_pb: Option<Vec<u8>>,
-        ds_id: Option<i64>,
-    ) -> Result<ProviderInstance> {
-        let ds_id = ds_id.unwrap_or(DS_ID);
-        debug!("Creating a new ProviderInstance (ds_id={ds_id})");
+    /// `adi_pb` is `Some` when continuing from an already-provisioned identity (get_headers), or
+    /// `None` when a provisioning session is about to create one.
+    pub fn new(identifier: Identifier, adi_pb: Option<Vec<u8>>) -> Result<ProviderInstance> {
+        debug!("Creating a new ProviderInstance (ds_id={STORE_DS_ID})");
         let cwd = current_dir()?;
 
-        let (identifier, uuid, path, should_cleanup) = match identifier {
-            Some(identifier) => {
-                let uuid = Uuid::from_bytes(identifier);
-                (
-                    identifier,
-                    uuid,
-                    cwd.join("provisioning").join(uuid.to_string()),
-                    true,
-                )
-            }
-            None => {
-                let identifier_file_path = cwd.join("identifier");
-                let mut identifier_file = std::fs::OpenOptions::new()
-                    .create(true)
-                    .read(true)
-                    .write(true)
-                    .open(identifier_file_path)?;
-                let mut identifier = [0u8; IDENTIFIER_LENGTH];
-                if identifier_file.metadata()?.len() == IDENTIFIER_LENGTH as u64 {
-                    identifier_file.read_exact(&mut identifier)?;
-                } else {
-                    rand::thread_rng().fill_bytes(&mut identifier);
-                    identifier_file.write_all(&identifier)?;
-                }
-                (identifier, Uuid::from_bytes(identifier), cwd.clone(), false)
-            }
-        };
+        let uuid = Uuid::from_bytes(identifier);
+        let path = cwd.join("provisioning").join(uuid.to_string());
         if std::fs::create_dir_all(&path).is_ok() {}
 
         if let Some(adi_pb) = adi_pb {
@@ -78,42 +48,10 @@ impl ProviderInstance {
             .set_local_user_uuid(hex::encode(local_user_uuid_hasher.finalize()).to_uppercase()); // 64 uppercase character hex
 
         let mut provider = ADIProxyAnisetteProvider::without_identifier(adi_proxy).unwrap(); // this will never fail
-        provider.set_ds_id(ds_id); // used by get_authentication_headers_v1/v3 (request_otp)
+        provider.set_ds_id(STORE_DS_ID); // request_otp / is_machine_provisioned use the App Store ds_id
 
         debug!("Successfully created a ProviderInstance");
-        Ok(ProviderInstance {
-            provider,
-            path,
-            should_cleanup,
-            ds_id,
-        })
-    }
-
-    // Retained from upstream for reference; this App-Store-only server no longer serves V1 (-2).
-    #[allow(dead_code)]
-    pub async fn get_authentication_headers_v1(&mut self) -> Result<HashMap<String, String>> {
-        let mut headers = self.provider.get_anisette_headers(false).await?;
-
-        // Provision servers give X-MMe-Client-Info because AltServer gives X-MMe-Client-Info.
-        // However, it's actually incorrect, and omnisette will normalize it to be X-Mme-Client-Info when using provider.get_authentication_headers().
-        // To maintain backwards compatibility with V1 (and older versions of SideStore), we clone the header to ensure it is in both the correct and incorrect header key.
-        // We don't need to do this for V3 (`/get_headers`, get_authentication_headers_unique) because versions of SideStore that support V3 will use the correct header.
-        if let Some(client_info) = headers.get("X-Mme-Client-Info") {
-            headers.insert("X-MMe-Client-Info".to_string(), client_info.clone());
-        } else if let Some(client_info) = headers.get("X-MMe-Client-Info") {
-            headers.insert("X-Mme-Client-Info".to_string(), client_info.clone());
-        }
-
-        // omnisette doesn't provide X-Apple-I-Client-Time, X-Apple-I-TimeZone or X-Apple-Locale headers because the client should provide them
-        // for V1 requests, we need to manually add them
-        headers.insert(
-            "X-Apple-I-Client-Time".to_string(),
-            chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-        );
-        headers.insert("X-Apple-I-TimeZone".to_string(), "UTC".to_string());
-        headers.insert("X-Apple-Locale".to_string(), "en_US".to_string());
-
-        Ok(headers)
+        Ok(ProviderInstance { provider, path })
     }
 
     pub async fn get_authentication_headers_v3(&mut self) -> Result<HashMap<String, String>> {
@@ -136,7 +74,7 @@ impl ProviderInstance {
     pub fn start_provisioning(&mut self, spim: &[u8]) -> Result<StartProvisioningData> {
         self.provider
             .adi_proxy()
-            .start_provisioning(self.ds_id, spim)
+            .start_provisioning(STORE_DS_ID, spim)
             .map_err(|e| anyhow!(e))
     }
 
@@ -166,13 +104,13 @@ impl ProviderInstance {
 
 impl Drop for ProviderInstance {
     fn drop(&mut self) {
-        if self.should_cleanup {
-            match std::fs::remove_dir_all(&self.path) {
-                Ok(_) => debug!("Successfully cleaned up {:?}", self.path),
-                Err(e)=> error!("Got error removing folder, server hoster might have to manually cleanup (removing {:?}): {e:?}", self.path),
-            };
-        } else {
-            debug!("Skipping cleanup for {:?}", self.path);
-        }
+        // Each request provisions into its own per-identifier directory; always clean it up.
+        match std::fs::remove_dir_all(&self.path) {
+            Ok(_) => debug!("Successfully cleaned up {:?}", self.path),
+            Err(e) => error!(
+                "Got error removing folder, server hoster might have to manually cleanup (removing {:?}): {e:?}",
+                self.path
+            ),
+        };
     }
 }
