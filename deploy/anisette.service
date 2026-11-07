@@ -1,0 +1,32 @@
+[Unit]
+Description=anisette (omnisette) server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=anisette
+Group=anisette
+WorkingDirectory=/opt/anisette
+ExecStart=/opt/anisette/omnisette-server --ip 127.0.0.1 --http-port 8787 --log-level Info
+Restart=always
+RestartSec=3
+
+# --- sandboxing ---
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/anisette
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+# --- resource protection: never starved or OOM-killed by other workloads on the box ---
+OOMScoreAdjust=-800
+MemoryMin=128M
+CPUWeight=2048
+IOWeight=2048
+
+[Install]
+WantedBy=multi-user.target

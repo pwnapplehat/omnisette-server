@@ -4,3 +4,9 @@ lib/*
 identifier
 adi.pb
 provisioning/
+# never commit the Apple Music APK (proprietary; source of the native ADI libs)
+*.apk
+# never commit tunnel/TLS secrets if staged here
+*.pem
+cert.pem
+*credentials*.json

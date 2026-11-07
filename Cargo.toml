@@ -43,3 +43,8 @@ awc = "3"
 futures-util = { version = "0.3", features = [
     "sink", # sink feature might not be required
 ] }
+
+# Use our fork of apple-private-apis, which adds a per-request ds_id to omnisette
+# (needed for the App Store AMD / type-2 flow). See that repo's `ds_id` commit.
+[patch."https://github.com/SideStore/apple-private-apis.git"]
+omnisette = { git = "https://github.com/pwnapplehat/apple-private-apis.git", branch = "master" }

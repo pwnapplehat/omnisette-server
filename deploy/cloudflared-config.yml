@@ -1,0 +1,19 @@
+# /etc/cloudflared/config.yml
+#
+# Put the origin behind a Cloudflare Tunnel so port 8787 is never exposed to the internet
+# (bind the server to 127.0.0.1) and TLS is terminated at Cloudflare's edge.
+#
+#   cloudflared tunnel login
+#   cloudflared tunnel create anisette
+#   cloudflared tunnel route dns anisette anisette.example.com
+#   cloudflared service install      # installs + runs this config as a systemd service
+#
+# Replace <TUNNEL_UUID> with the id printed by `tunnel create`, and the hostname with your domain.
+
+tunnel: <TUNNEL_UUID>
+credentials-file: /etc/cloudflared/<TUNNEL_UUID>.json
+
+ingress:
+  - hostname: anisette.example.com
+    service: http://localhost:8787
+  - service: http_status:404

@@ -18,14 +18,17 @@ pub struct ProviderInstance {
     provider: ADIProxyAnisetteProvider<StoreServicesCoreADIProxy<'static>>,
     path: PathBuf,
     should_cleanup: bool,
+    ds_id: i64,
 }
 
 impl ProviderInstance {
     pub fn new(
         identifier: Option<Identifier>,
         adi_pb: Option<Vec<u8>>,
+        ds_id: Option<i64>,
     ) -> Result<ProviderInstance> {
-        debug!("Creating a new ProviderInstance");
+        let ds_id = ds_id.unwrap_or(DS_ID);
+        debug!("Creating a new ProviderInstance (ds_id={ds_id})");
         let cwd = current_dir()?;
 
         let (identifier, uuid, path, should_cleanup) = match identifier {
@@ -74,11 +77,15 @@ impl ProviderInstance {
         adi_proxy
             .set_local_user_uuid(hex::encode(local_user_uuid_hasher.finalize()).to_uppercase()); // 64 uppercase character hex
 
+        let mut provider = ADIProxyAnisetteProvider::without_identifier(adi_proxy).unwrap(); // this will never fail
+        provider.set_ds_id(ds_id); // used by get_authentication_headers_v1/v3 (request_otp)
+
         debug!("Successfully created a ProviderInstance");
         Ok(ProviderInstance {
-            provider: ADIProxyAnisetteProvider::without_identifier(adi_proxy).unwrap(), // this will never fail
+            provider,
             path,
             should_cleanup,
+            ds_id,
         })
     }
 
@@ -127,7 +134,7 @@ impl ProviderInstance {
     pub fn start_provisioning(&mut self, spim: &[u8]) -> Result<StartProvisioningData> {
         self.provider
             .adi_proxy()
-            .start_provisioning(DS_ID, spim)
+            .start_provisioning(self.ds_id, spim)
             .map_err(|e| anyhow!(e))
     }
 

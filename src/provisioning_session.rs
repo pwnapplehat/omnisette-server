@@ -26,6 +26,10 @@ const TIMEOUT: Duration = Duration::from_millis(TIMEOUT_DURATION);
 #[cfg_attr(test, derive(Serialize))]
 pub struct Identifier {
     pub identifier: String,
+    /// Optional directory-services ID for this provisioning session. Omitted/null -> the server
+    /// default (-2, ordinary anisette). Clients doing the App Store AMD flow send -1.
+    #[serde(default)]
+    pub ds_id: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -94,6 +98,7 @@ impl ProvisioningSession {
         info!("Handling identifier");
         match serde_json::from_str::<Identifier>(text.to_string().as_str()) {
             Ok(d) => {
+                let ds_id = d.ds_id;
                 let identifier = match base64_engine.decode(d.identifier) {
                     Ok(i) => i,
                     Err(e) => {
@@ -121,6 +126,7 @@ impl ProvisioningSession {
                 self.provider = match ProviderInstance::new(
                     Some(identifier.as_slice().try_into().unwrap()),
                     None,
+                    ds_id,
                 ) {
                     Ok(p) => Some(p),
                     Err(e) => {

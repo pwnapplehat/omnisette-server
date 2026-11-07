@@ -5,10 +5,14 @@ use crate::provider_instance::ProviderInstance;
 use crate::provisioning_session::ProvisioningSession;
 use crate::result::ServerResult;
 
+use actix_web::body::BoxBody;
+use actix_web::dev::{Service, ServiceResponse};
 use actix_web::error::InternalError;
 use actix_web::middleware::{DefaultHeaders, Logger};
 use actix_web::{get, post, web, App, Error, HttpRequest, HttpResponse, HttpServer, Responder};
 use actix_web_actors::ws;
+use std::future::Future;
+use std::pin::Pin;
 use base64::engine::general_purpose::STANDARD as base64_engine;
 use base64::Engine;
 use clap::Parser;
@@ -23,12 +27,15 @@ use simplelog::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode};
 
 mod provider_instance;
 mod provisioning_session;
+mod rate_limit;
 mod result;
+
+use crate::rate_limit::{client_ip, RateLimiter};
 
 pub const PAYLOAD_LIMIT: usize = 1536; // this should be more than enough for identifier + adi.pb, both in base64 and wrapped in JSON
 
 static V1_PROVIDER: Mutex<Lazy<ProviderInstance>> =
-    Mutex::new(Lazy::new(|| ProviderInstance::new(None, None).unwrap()));
+    Mutex::new(Lazy::new(|| ProviderInstance::new(None, None, None).unwrap()));
 
 #[cfg(test)]
 mod tests;
@@ -64,6 +71,15 @@ async fn client_info() -> impl Responder {
     CLIENT_INFO
 }
 
+/// Lightweight liveness endpoint for uptime monitoring. Does not touch ADI, so it stays cheap and
+/// cannot be used to drive provisioning load.
+#[get("/health")]
+async fn health() -> impl Responder {
+    HttpResponse::Ok()
+        .content_type("text/plain")
+        .body("ok")
+}
+
 #[get("/v3/provisioning_session")]
 async fn provisioning_session_ws(
     req: HttpRequest,
@@ -78,6 +94,10 @@ async fn provisioning_session_ws(
 pub struct HeadersInput {
     identifier: String,
     adi_pb: String,
+    /// Optional directory-services ID. Omitted/null -> -2 (ordinary anisette). Must match the
+    /// ds_id the supplied adi.pb was provisioned with; the App Store AMD flow sends -1.
+    #[serde(default)]
+    ds_id: Option<i64>,
 }
 
 #[post("/v3/get_headers")]
@@ -112,7 +132,7 @@ async fn get_headers(input: web::Json<HeadersInput>) -> impl Responder {
         }
     };
 
-    let mut provider = match ProviderInstance::new(Some(identifier), Some(adi_pb)) {
+    let mut provider = match ProviderInstance::new(Some(identifier), Some(adi_pb), input.ds_id) {
         Ok(i) => i,
         Err(e) => {
             error!("Got creating ProviderInstance: {e:?}");
@@ -221,8 +241,33 @@ async fn main() -> std::io::Result<()> {
             .unwrap()
     );
 
-    let mut server = HttpServer::new(|| {
+    // Shared across all workers so the per-IP budget is global, not per-thread.
+    let limiter = RateLimiter::new(rate_limit::BURST_CAPACITY, rate_limit::REFILL_PER_SEC);
+    info!(
+        "Rate limit: burst {} tokens, refill {}/s per client IP (CF-Connecting-IP)",
+        rate_limit::BURST_CAPACITY,
+        rate_limit::REFILL_PER_SEC
+    );
+
+    let mut server = HttpServer::new(move || {
+        let limiter = limiter.clone();
         App::new()
+            .wrap_fn(move |req, srv| {
+                if limiter.check(client_ip(&req)) {
+                    let fut = srv.call(req);
+                    Box::pin(async move { Ok(fut.await?.map_into_boxed_body()) })
+                        as Pin<Box<dyn Future<Output = Result<ServiceResponse<BoxBody>, Error>>>>
+                } else {
+                    let response = HttpResponse::TooManyRequests()
+                        .insert_header(("Retry-After", "1"))
+                        .content_type("application/json")
+                        .body(
+                            r#"{"result":"RateLimited","message":"Too many requests, please slow down and retry."}"#,
+                        );
+                    let resp = req.into_response(response);
+                    Box::pin(async move { Ok(resp) })
+                }
+            })
             .app_data(
                 web::JsonConfig::default()
                     .limit(PAYLOAD_LIMIT)
@@ -268,6 +313,7 @@ async fn main() -> std::io::Result<()> {
                     .add(("Cross-Origin-Resource-Policy", "same-site")),
             )
             .service(index)
+            .service(health)
             .service(client_info)
             .service(provisioning_session_ws)
             .service(get_headers)
